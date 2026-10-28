@@ -1,289 +1,76 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>XIAO nRF52840 Sense — BLE Recorder</title>
-<style>
-  :root { --bg:#0f1220; --card:#171a2e; --fg:#e8ecff; --muted:#9aa3c7;
-          --accent:#4cc9f0; --ok:#2ecc71; --err:#ff6b6b; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, Segoe UI, Roboto, sans-serif;
-         background: var(--bg); color: var(--fg); }
-  header { padding: 16px 20px; border-bottom:1px solid #262a44; }
-  h1 { margin:0; font-size:18px; }
-  main { padding: 16px 20px; display:grid; gap:16px; grid-template-columns: 1fr; }
-  @media (min-width: 900px){ main{ grid-template-columns: 1fr 1fr; } }
-  .card { background: var(--card); border:1px solid #262a44; border-radius:12px;
-          padding:14px 16px; }
-  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-  button { background: var(--accent); color:#001018; border:0; padding:8px 14px;
-           border-radius:8px; font-weight:600; cursor:pointer; }
-  button:disabled { opacity:.4; cursor:not-allowed; }
-  button.ghost { background:transparent; color:var(--fg); border:1px solid #3a4070; }
-  .stat { display:flex; gap:14px; flex-wrap:wrap; font-size:14px; color:var(--muted); }
-  .stat b { color:var(--fg); }
-  .pill { padding:2px 8px; border-radius:999px; background:#22274a; color:var(--muted); }
-  .pill.on { background:#123a27; color:var(--ok); }
-  pre { background:#0b0e1c; border:1px solid #262a44; border-radius:8px;
-        padding:10px; max-height:260px; overflow:auto; font-size:12px; }
-  canvas { width:100%; height:140px; background:#0b0e1c; border-radius:8px; }
-</style>
-</head>
-<body>
-<header>
-  <h1>XIAO nRF52840 Sense — BLE IMU + Mic Recorder</h1>
-</header>
-
-<main>
-  <section class="card">
-    <div class="row">
-      <button id="btnConnect">Connect</button>
-      <button id="btnStart" disabled>Start Recording</button>
-      <button id="btnStop"  disabled>Stop Recording</button>
-      <button id="btnRefresh" class="ghost">Refresh Data</button>
-      <button id="btnDownloadImu" class="ghost" disabled>Download IMU (.csv)</button>
-      <button id="btnDownloadMic" class="ghost" disabled>Download Mic (.wav)</button>
-    </div>
-    <div class="stat" style="margin-top:12px">
-      <span>Status: <span id="status" class="pill">disconnected</span></span>
-      <span>Recording: <span id="recPill" class="pill">off</span></span>
-      <span>IMU samples: <b id="imuCount">0</b></span>
-      <span>Mic samples: <b id="micCount">0</b></span>
-      <span>IMU rate: <b id="imuRate">0</b> Hz</span>
-      <span>Mic rate: <b id="micRate">0</b> Hz</span>
-    </div>
-  </section>
-
-  <section class="card">
-    <h3 style="margin:0 0 8px">Live preview</h3>
-    <canvas id="wave" width="800" height="140"></canvas>
-    <pre id="log">—</pre>
-  </section>
-</main>
-
-<script>
-/* ---------- Config ---------- */
-const SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0';
-const TIME_UUID    = '12345678-1234-5678-1234-56789abcdef1';
-const CTRL_UUID    = '12345678-1234-5678-1234-56789abcdef2';
-const IMU_UUID     = '12345678-1234-5678-1234-56789abcdef3';
-const MIC_UUID     = '12345678-1234-5678-1234-56789abcdef4';
-
-const MIC_RATE = 20000; // Hz
-
-/* ---------- State ---------- */
-let device = null, server = null, service = null;
-let ctrlChar = null, timeChar = null, imuChar = null, micChar = null;
-let recording = false;
-
-// Storage
-const imuRows = []; // {t, ax, ay, az, gx, gy, gz}
-const micChunks = []; // {t: epochMs, samples: Int16Array}
-let imuTotal = 0, micTotal = 0;
-let lastImuRateT = 0, lastImuRateN = 0, imuRate = 0;
-let lastMicRateT = 0, lastMicRateN = 0, micRate = 0;
-
-/* ---------- UI refs ---------- */
-const $ = id => document.getElementById(id);
-const statusEl = $('status'), recPill = $('recPill');
-const imuCountEl = $('imuCount'), micCountEl = $('micCount');
-const imuRateEl = $('imuRate'), micRateEl = $('micRate');
-const logEl = $('log');
-
-function log(msg) {
-  const t = new Date().toISOString().substr(11,12);
-  logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent.slice(0, 2000);
-}
-
-/* ---------- BLE ---------- */
 async function connect() {
   try {
+    if (!navigator.bluetooth) {
+      log("Web Bluetooth not supported in this browser.");
+      return;
+    }
+
+    if (!window.isSecureContext) {
+      log("ERROR: page is not a secure context. Use https:// or http://localhost");
+      return;
+    }
+
+    log("Secure context OK. Opening chooser...");
+
+    // Debug mode: show ALL Bluetooth LE devices
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ name: 'XIAO-Sense-IMU-MIC' }],
+      acceptAllDevices: true,
       optionalServices: [SERVICE_UUID]
     });
-    device.addEventListener('gattserverdisconnected', onDisconnect);
-    log('Connecting…');
+
+    log("Device selected: " + device.name);
+
+    device.addEventListener("gattserverdisconnected", onDisconnect);
+
+    log("Connecting GATT...");
     server = await device.gatt.connect();
+    log("GATT connected");
+
     service = await server.getPrimaryService(SERVICE_UUID);
+    log("Primary service found");
+
     timeChar = await service.getCharacteristic(TIME_UUID);
     ctrlChar = await service.getCharacteristic(CTRL_UUID);
     imuChar  = await service.getCharacteristic(IMU_UUID);
     micChar  = await service.getCharacteristic(MIC_UUID);
 
-    // Sync Unix epoch ms (8 bytes, little-endian)
+    log("Characteristics found");
+
+    // Sync Unix epoch ms
     const now = BigInt(Date.now());
     const buf = new ArrayBuffer(8);
     const dv = new DataView(buf);
     dv.setBigUint64(0, now, true);
     await timeChar.writeValue(buf);
-    log('Time synced: ' + now.toString());
+    log("Time synced: " + now.toString());
 
-    // Subscribe notifications
     await imuChar.startNotifications();
     await micChar.startNotifications();
-    imuChar.addEventListener('characteristicvaluechanged', onImu);
-    micChar.addEventListener('characteristicvaluechanged', onMic);
 
-    statusEl.textContent = 'connected';
-    statusEl.classList.add('on');
-    $('btnStart').disabled = false;
-    $('btnDownloadImu').disabled = false;
-    $('btnDownloadMic').disabled = false;
-    log('Ready.');
-  } catch (e) {
-    log('Connect error: ' + e.message);
+    imuChar.addEventListener("characteristicvaluechanged", onImu);
+    micChar.addEventListener("characteristicvaluechanged", onMic);
+
+    statusEl.textContent = "connected";
+    statusEl.classList.add("on");
+    $("btnStart").disabled = false;
+    $("btnDownloadImu").disabled = false;
+    $("btnDownloadMic").disabled = false;
+
+    log("Ready.");
+
+  } catch (error) {
+    log(error.name + ": " + error.message);
+
+    if (error.name === "NotFoundError") {
+      log("Chooser was cancelled or no device selected.");
+    }
+
+    if (error.name === "SecurityError") {
+      log("Web Bluetooth blocked. Use HTTPS or localhost.");
+    }
+
+    if (error.name === "NetworkError") {
+      log("Bluetooth radio unavailable or permission denied.");
+    }
   }
 }
-
-function onDisconnect() {
-  statusEl.textContent = 'disconnected';
-  statusEl.classList.remove('on');
-  recPill.textContent = 'off'; recPill.classList.remove('on');
-  $('btnStart').disabled = true; $('btnStop').disabled = true;
-  log('Disconnected.');
-}
-
-async function startRecording() {
-  await ctrlChar.writeValue(new Uint8Array([1]));
-  recording = true;
-  $('btnStart').disabled = true; $('btnStop').disabled = false;
-  recPill.textContent = 'recording'; recPill.classList.add('on');
-  log('Recording started.');
-}
-async function stopRecording() {
-  await ctrlChar.writeValue(new Uint8Array([0]));
-  recording = false;
-  $('btnStart').disabled = false; $('btnStop').disabled = true;
-  recPill.textContent = 'off'; recPill.classList.remove('on');
-  log('Recording stopped.');
-}
-
-/* ---------- Data handlers ---------- */
-function onImu(e) {
-  const dv = new DataView(e.target.value.buffer.slice(0));
-  const t  = Number(dv.getBigUint64(0, true));
-  const ax = dv.getInt16(8,  true) / 1000.0; // g
-  const ay = dv.getInt16(10, true) / 1000.0;
-  const az = dv.getInt16(12, true) / 1000.0;
-  const gx = dv.getInt16(14, true) / 100.0;  // dps
-  const gy = dv.getInt16(16, true) / 100.0;
-  const gz = dv.getInt16(18, true) / 100.0;
-  if (recording) imuRows.push({t, ax, ay, az, gx, gy, gz});
-  imuTotal++; imuCountEl.textContent = imuTotal;
-
-  const now = performance.now();
-  lastImuRateN++;
-  if (now - lastImuRateT >= 1000) {
-    imuRate = Math.round(lastImuRateN * 1000 / (now - lastImuRateT));
-    imuRateEl.textContent = imuRate;
-    lastImuRateN = 0; lastImuRateT = now;
-  }
-}
-
-function onMic(e) {
-  const buf = e.target.value.buffer;
-  const dv = new DataView(buf);
-  const t = Number(dv.getBigUint64(0, true));
-  const nSamples = Math.floor((buf.byteLength - 8) / 2);
-  const samples = new Int16Array(nSamples);
-  for (let i = 0; i < nSamples; i++) samples[i] = dv.getInt16(8 + i*2, true);
-  if (recording) micChunks.push({t, samples});
-  micTotal += nSamples; micCountEl.textContent = micTotal;
-
-  // live waveform
-  drawWave(samples);
-
-  const now = performance.now();
-  lastMicRateN += nSamples;
-  if (now - lastMicRateT >= 1000) {
-    micRate = Math.round(lastMicRateN * 1000 / (now - lastMicRateT));
-    micRateEl.textContent = micRate;
-    lastMicRateN = 0; lastMicRateT = now;
-  }
-}
-
-/* ---------- Waveform preview ---------- */
-const waveCanvas = $('wave');
-const wctx = waveCanvas.getContext('2d');
-function drawWave(samples) {
-  const W = waveCanvas.width, H = waveCanvas.height;
-  wctx.fillStyle = '#0b0e1c'; wctx.fillRect(0,0,W,H);
-  wctx.strokeStyle = '#4cc9f0'; wctx.beginPath();
-  const step = Math.max(1, Math.floor(samples.length / W));
-  for (let x = 0; x < W; x++) {
-    const idx = Math.min(samples.length-1, Math.floor(x * samples.length / W));
-    const y = H/2 - (samples[idx] / 32768) * (H/2 - 4);
-    if (x === 0) wctx.moveTo(x, y); else wctx.lineTo(x, y);
-  }
-  wctx.stroke();
-}
-
-/* ---------- Refresh / Download ---------- */
-function refreshData() {
-  log(`IMU rows: ${imuRows.length}, Mic chunks: ${micChunks.length}`);
-}
-
-function downloadImuCsv() {
-  const header = 'epoch_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n';
-  const lines = imuRows.map(r =>
-    `${r.t},${r.ax.toFixed(4)},${r.ay.toFixed(4)},${r.az.toFixed(4)},` +
-    `${r.gx.toFixed(3)},${r.gy.toFixed(3)},${r.gz.toFixed(3)}`
-  ).join('\n');
-  const blob = new Blob([header + lines], {type:'text/csv'});
-  triggerDownload(blob, `imu_${Date.now()}.csv`);
-}
-
-function downloadMicWav() {
-  // Concatenate all chunks into a single PCM16 buffer
-  let totalSamples = 0;
-  for (const c of micChunks) totalSamples += c.samples.length;
-  const pcm = new Int16Array(totalSamples);
-  let off = 0;
-  for (const c of micChunks) {
-    pcm.set(c.samples, off);
-    off += c.samples.length;
-  }
-  const wav = encodeWav(pcm, MIC_RATE, 1, 16);
-  const blob = new Blob([wav], {type:'audio/wav'});
-  triggerDownload(blob, `mic_${Date.now()}.wav`);
-}
-
-function encodeWav(samples, sampleRate, channels, bitsPerSample) {
-  const byteRate = sampleRate * channels * bitsPerSample / 8;
-  const blockAlign = channels * bitsPerSample / 8;
-  const dataSize = samples.length * (bitsPerSample / 8);
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const v = new DataView(buffer);
-  const w = (o, s) => { for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
-  w(0,'RIFF'); v.setUint32(4, 36 + dataSize, true); w(8,'WAVE');
-  w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true);
-  v.setUint16(22, channels, true);
-  v.setUint32(24, sampleRate, true);
-  v.setUint32(28, byteRate, true);
-  v.setUint16(32, blockAlign, true);
-  v.setUint16(34, bitsPerSample, true);
-  w(36,'data'); v.setUint32(40, dataSize, true);
-  for (let i=0;i<samples.length;i++) v.setInt16(44 + i*2, samples[i], true);
-  return buffer;
-}
-
-function triggerDownload(blob, name) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-}
-
-/* ---------- Wire up buttons ---------- */
-$('btnConnect').onclick = connect;
-$('btnStart').onclick = startRecording;
-$('btnStop').onclick = stopRecording;
-$('btnRefresh').onclick = refreshData;
-$('btnDownloadImu').onclick = downloadImuCsv;
-$('btnDownloadMic').onclick = downloadMicWav;
-</script>
-</body>
-</html>
