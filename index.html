@@ -448,7 +448,7 @@
             try {
                 log('Requesting Bluetooth device...', 'info');
                 device = await navigator.bluetooth.requestDevice({
-                    filters: [{ name: 'XIAO-Sense-IMU-PDM' }],
+                    filters: [{ name: 'XIAO-' }],
                     optionalServices: [SERVICE_UUID]
                 });
                 
