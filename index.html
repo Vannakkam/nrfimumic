@@ -448,7 +448,7 @@
             try {
                 log('Requesting Bluetooth device...', 'info');
                 device = await navigator.bluetooth.requestDevice({
-                    filters: [{ name: 'XIAO-' }],
+                    filters: [{ name: 'IMU_MIC' }],
                     optionalServices: [SERVICE_UUID]
                 });
                 
