@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XIAO nRF52840 Sense - IMU + PDM Streamer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        
+        header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .connection-section {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(135deg, #f2994a 0%, #f2c94c 100%);
+            color: white;
+        }
+        
+        .btn-info {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ccc;
+        }
+        
+        .status-dot.connected {
+            background: #4caf50;
+            box-shadow: 0 0 8px rgba(76, 175, 80, 0.6);
+        }
+        
+        .status-dot.streaming {
+            background: #2196f3;
+            box-shadow: 0 0 8px rgba(33, 150, 243, 0.6);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        .status-dot.recording {
+            background: #f44336;
+            box-shadow: 0 0 8px rgba(244, 67, 54, 0.6);
+            animation: pulse 1s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .imu-data {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .imu-axis {
+            background: #f9f9f9;
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .imu-axis h4 {
+            color: #667eea;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        .axis-values {
+            display: flex;
+            gap: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        
+        .axis-values span {
+            flex: 1;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 15px;
+        }
+        
+        .log-entry {
+            margin-bottom: 3px;
+        }
+        
+        .log-entry.info { color: #4fc3f7; }
+        .log-entry.success { color: #81c784; }
+        .log-entry.warning { color: #ffb74d; }
+        .log-entry.error { color: #e57373; }
+        
+        canvas {
+            width: 100%;
+            height: 200px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎯 XIAO nRF52840 Sense Streamer</h1>
+            <p>IMU @ 416 Hz | PDM Microphone @ 16 kHz | Web Bluetooth</p>
+        </header>
+        
+        <!-- Connection Card -->
+        <div class="card">
+            <h2>🔗 Connection</h2>
+            <div class="connection-section">
+                <button id="connectBtn" class="btn btn-primary">
+                    <span>📡</span> Connect to Device
+                </button>
+                <button id="syncTimeBtn" class="btn btn-info" disabled>
+                    <span>⏰</span> Sync Time
+                </button>
+                <div class="status-indicator">
+                    <div id="connDot" class="status-dot"></div>
+                    <span id="connStatus">Disconnected</span>
+                </div>
+                <div class="status-indicator">
+                    <div id="streamDot" class="status-dot"></div>
+                    <span id="streamStatus">Not Streaming</span>
+                </div>
+                <div class="status-indicator">
+                    <div id="recordDot" class="status-dot"></div>
+                    <span id="recordStatus">Not Recording</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Controls Card -->
+        <div class="card">
+            <h2>🎮 Controls</h2>
+            <div class="controls">
+                <button id="refreshBtn" class="btn btn-warning" disabled>
+                    <span>🔄</span> Refresh Data
+                </button>
+                <button id="startRecordBtn" class="btn btn-success" disabled>
+                    <span>▶️</span> Start Recording
+                </button>
+                <button id="stopRecordBtn" class="btn btn-danger" disabled>
+                    <span>⏹️</span> Stop Recording
+                </button>
+                <button id="downloadCsvBtn" class="btn btn-info" disabled>
+                    <span>📊</span> Download CSV (IMU)
+                </button>
+                <button id="downloadWavBtn" class="btn btn-info" disabled>
+                    <span>🎵</span> Download WAV (Audio)
+                </button>
+            </div>
+        </div>
+        
+        <!-- Statistics Card -->
+        <div class="card">
+            <h2>📈 Statistics</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">IMU Samples</div>
+                    <div class="stat-value" id="imuCount">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">PDM Samples</div>
+                    <div class="stat-value" id="pdmCount">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Data Rate (IMU)</div>
+                    <div class="stat-value" id="imuRate">0 Hz</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Recording Time</div>
+                    <div class="stat-value" id="recTime">00:00</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- IMU Data Card -->
+        <div class="card">
+            <h2>📊 IMU Data (Real-time)</h2>
+            <div class="imu-data">
+                <div class="imu-axis">
+                    <h4>Accelerometer (g * 1000)</h4>
+                    <div class="axis-values">
+                        <span>X: <span id="ax">0</span></span>
+                        <span>Y: <span id="ay">0</span></span>
+                        <span>Z: <span id="az">0</span></span>
+                    </div>
+                </div>
+                <div class="imu-axis">
+                    <h4>Gyroscope (°/s * 10)</h4>
+                    <div class="axis-values">
+                        <span>X: <span id="gx">0</span></span>
+                        <span>Y: <span id="gy">0</span></span>
+                        <span>Z: <span id="gz">0</span></span>
+                    </div>
+                </div>
+                <div class="imu-axis">
+                    <h4>Temperature</h4>
+                    <div class="axis-values">
+                        <span>°C: <span id="temp">0</span></span>
+                        <span>Seq: <span id="seq">0</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Log Card -->
+        <div class="card">
+            <h2>📝 Activity Log</h2>
+            <div class="log" id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        // BLE UUIDs
+        const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+        const CHAR_CONTROL_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+        const CHAR_TIME_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a9';
+        const CHAR_IMU_DATA_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26aa';
+        const CHAR_PDM_DATA_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26ab';
+        const CHAR_STATUS_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26ac';
+        
+        // Commands
+        const CMD_START_STREAM = 0x01;
+        const CMD_STOP_STREAM = 0x02;
+        const CMD_GET_STATUS = 0x03;
+        const CMD_SET_RECORDING = 0x05;
+        
+        // BLE objects
+        let device = null;
+        let server = null;
+        let service = null;
+        let controlChar = null;
+        let timeChar = null;
+        let imuDataChar = null;
+        let pdmDataChar = null;
+        let statusChar = null;
+        
+        // Data storage
+        let imuDataLog = [];
+        let pdmDataLog = [];
+        let isConnected = false;
+        let isStreaming = false;
+        let isRecording = false;
+        let recordingStartTime = 0;
+        let imuSampleCount = 0;
+        let pdmSampleCount = 0;
+        let lastImuCount = 0;
+        let rateInterval = null;
+        
+        // DOM elements
+        const connectBtn = document.getElementById('connectBtn');
+        const syncTimeBtn = document.getElementById('syncTimeBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const startRecordBtn = document.getElementById('startRecordBtn');
+        const stopRecordBtn = document.getElementById('stopRecordBtn');
+        const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+        const downloadWavBtn = document.getElementById('downloadWavBtn');
+        
+        const connDot = document.getElementById('connDot');
+        const connStatus = document.getElementById('connStatus');
+        const streamDot = document.getElementById('streamDot');
+        const streamStatus = document.getElementById('streamStatus');
+        const recordDot = document.getElementById('recordDot');
+        const recordStatus = document.getElementById('recordStatus');
+        
+        const imuCountEl = document.getElementById('imuCount');
+        const pdmCountEl = document.getElementById('pdmCount');
+        const imuRateEl = document.getElementById('imuRate');
+        const recTimeEl = document.getElementById('recTime');
+        
+        const axEl = document.getElementById('ax');
+        const ayEl = document.getElementById('ay');
+        const azEl = document.getElementById('az');
+        const gxEl = document.getElementById('gx');
+        const gyEl = document.getElementById('gy');
+        const gzEl = document.getElementById('gz');
+        const tempEl = document.getElementById('temp');
+        const seqEl = document.getElementById('seq');
+        
+        const logEl = document.getElementById('log');
+        
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        // Connect button
+        connectBtn.addEventListener('click', async () => {
+            if (isConnected) {
+                // Disconnect
+                if (device) {
+                    device.gatt.disconnect();
+                }
+                return;
+            }
+            
+            try {
+                log('Requesting Bluetooth device...', 'info');
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'XIAO-Sense-IMU-PDM' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+                
+                log(`Connecting to ${device.name}...`, 'info');
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                server = await device.gatt.connect();
+                log('Connected to GATT server', 'success');
+                
+                service = await server.getPrimaryService(SERVICE_UUID);
+                log('Service found', 'success');
+                
+                // Get characteristics
+                controlChar = await service.getCharacteristic(CHAR_CONTROL_UUID);
+                timeChar = await service.getCharacteristic(CHAR_TIME_UUID);
+                imuDataChar = await service.getCharacteristic(CHAR_IMU_DATA_UUID);
+                pdmDataChar = await service.getCharacteristic(CHAR_PDM_DATA_UUID);
+                statusChar = await service.getCharacteristic(CHAR_STATUS_UUID);
+                
+                // Subscribe to notifications
+                await imuDataChar.startNotifications();
+                imuDataChar.addEventListener('characteristicvaluechanged', handleIMUData);
+                
+                await pdmDataChar.startNotifications();
+                pdmDataChar.addEventListener('characteristicvaluechanged', handlePDMData);
+                
+                await statusChar.startNotifications();
+                statusChar.addEventListener('characteristicvaluechanged', handleStatus);
+                
+                isConnected = true;
+                updateUI();
+                
+                log('All characteristics subscribed', 'success');
+                
+                // Auto-sync time
+                syncTime();
+                
+                // Start streaming
+                setTimeout(() => {
+                    startStreaming();
+                }, 500);
+                
+                // Start rate calculation
+                rateInterval = setInterval(calculateRate, 1000);
+                
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                console.error(error);
+            }
+        });
+        
+        function onDisconnected() {
+            log('Device disconnected', 'warning');
+            isConnected = false;
+            isStreaming = false;
+            isRecording = false;
+            if (rateInterval) clearInterval(rateInterval);
+            updateUI();
+        }
+        
+        function updateUI() {
+            if (isConnected) {
+                connectBtn.textContent = '🔌 Disconnect';
+                connectBtn.classList.remove('btn-primary');
+                connectBtn.classList.add('btn-danger');
+                connDot.classList.add('connected');
+                connStatus.textContent = 'Connected';
+                syncTimeBtn.disabled = false;
+                refreshBtn.disabled = false;
+                startRecordBtn.disabled = isRecording;
+                stopRecordBtn.disabled = !isRecording;
+            } else {
+                connectBtn.textContent = '📡 Connect to Device';
+                connectBtn.classList.remove('btn-danger');
+                connectBtn.classList.add('btn-primary');
+                connDot.classList.remove('connected', 'streaming', 'recording');
+                connStatus.textContent = 'Disconnected';
+                syncTimeBtn.disabled = true;
+                refreshBtn.disabled = true;
+                startRecordBtn.disabled = true;
+                stopRecordBtn.disabled = true;
+                downloadCsvBtn.disabled = true;
+                downloadWavBtn.disabled = true;
+                streamDot.classList.remove('streaming');
+                streamStatus.textContent = 'Not Streaming';
+                recordDot.classList.remove('recording');
+                recordStatus.textContent = 'Not Recording';
+            }
+            
+            if (isStreaming) {
+                streamDot.classList.add('streaming');
+                streamStatus.textContent = 'Streaming (416Hz IMU + 16kHz PDM)';
+            } else if (isConnected) {
+                streamDot.classList.remove('streaming');
+                streamStatus.textContent = 'Ready';
+            }
+            
+            if (isRecording) {
+                recordDot.classList.add('recording');
+                recordStatus.textContent = 'Recording';
+                startRecordBtn.disabled = true;
+                stopRecordBtn.disabled = false;
+                downloadCsvBtn.disabled = true;
+                downloadWavBtn.disabled = true;
+            } else if (isConnected && isStreaming) {
+                recordDot.classList.remove('recording');
+                recordStatus.textContent = 'Ready to Record';
+                startRecordBtn.disabled = false;
+                stopRecordBtn.disabled = true;
+                if (imuDataLog.length > 0) downloadCsvBtn.disabled = false;
+                if (pdmDataLog.length > 0) downloadWavBtn.disabled = false;
+            }
+        }
+        
+        async function syncTime() {
+            if (!timeChar) return;
+            const now = Math.floor(Date.now() / 1000);
+            const buffer = new ArrayBuffer(4);
+            const view = new DataView(buffer);
+            view.setUint32(0, now, true); // little endian
+            try {
+                await timeChar.writeValue(buffer);
+                log(`Time synced: ${new Date(now * 1000).toISOString()}`, 'success');
+            } catch (error) {
+                log(`Time sync error: ${error.message}`, 'error');
+            }
+        }
+        
+        syncTimeBtn.addEventListener('click', syncTime);
+        
+        async function startStreaming() {
+            if (!controlChar) return;
+            const buffer = new ArrayBuffer(1);
+            const view = new DataView(buffer);
+            view.setUint8(0, CMD_START_STREAM);
+            try {
+                await controlChar.writeValue(buffer);
+                isStreaming = true;
+                updateUI();
+                log('Streaming started', 'success');
+            } catch (error) {
+                log(`Start stream error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function refreshData() {
+            if (!controlChar) return;
+            const buffer = new ArrayBuffer(1);
+            const view = new DataView(buffer);
+            view.setUint8(0, CMD_GET_STATUS);
+            try {
+                await controlChar.writeValue(buffer);
+                log('Status refreshed', 'info');
+            } catch (error) {
+                log(`Refresh error: ${error.message}`, 'error');
+            }
+        }
+        
+        refreshBtn.addEventListener('click', refreshData);
+        
+        async function startRecording() {
+            if (!controlChar) return;
+            const buffer = new ArrayBuffer(2);
+            const view = new DataView(buffer);
+            view.setUint8(0, CMD_SET_RECORDING);
+            view.setUint8(1, 0x01);
+            try {
+                await controlChar.writeValue(buffer);
+                isRecording = true;
+                recordingStartTime = Date.now();
+                imuDataLog = [];
+                pdmDataLog = [];
+                imuSampleCount = 0;
+                pdmSampleCount = 0;
+                updateUI();
+                log('Recording started', 'success');
+                startRecordingTimer();
+            } catch (error) {
+                log(`Start recording error: ${error.message}`, 'error');
+            }
+        }
+        
+        startRecordBtn.addEventListener('click', startRecording);
+        
+        let recTimer = null;
+        function startRecordingTimer() {
+            if (recTimer) clearInterval(recTimer);
+            recTimer = setInterval(() => {
+                if (!isRecording) {
+                    clearInterval(recTimer);
+                    return;
+                }
+                const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+                const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
+                const secs = (elapsed % 60).toString().padStart(2, '0');
+                recTimeEl.textContent = `${mins}:${secs}`;
+            }, 1000);
+        }
+        
+        async function stopRecording() {
+            if (!controlChar) return;
+            const buffer = new ArrayBuffer(2);
+            const view = new DataView(buffer);
+            view.setUint8(0, CMD_SET_RECORDING);
+            view.setUint8(1, 0x00);
+            try {
+                await controlChar.writeValue(buffer);
+                isRecording = false;
+                if (recTimer) clearInterval(recTimer);
+                updateUI();
+                log(`Recording stopped. IMU: ${imuDataLog.length} samples, PDM: ${pdmDataLog.length} samples`, 'success');
+            } catch (error) {
+                log(`Stop recording error: ${error.message}`, 'error');
+            }
+        }
+        
+        stopRecordBtn.addEventListener('click', stopRecording);
+        
+        function handleIMUData(event) {
+            const value = event.target.value;
+            const data = new Uint8Array(value.buffer);
+            
+            if (data[0] === 0x49 && data.length >= 24) { // 'I'
+                const view = new DataView(value.buffer);
+                const seq = view.getUint32(2, true);
+                const timestamp = view.getUint32(6, true);
+                const ax = view.getInt16(10, true);
+                const ay = view.getInt16(12, true);
+                const az = view.getInt16(14, true);
+                const gx = view.getInt16(16, true);
+                const gy = view.getInt16(18, true);
+                const gz = view.getInt16(20, true);
+                const temp = view.getInt16(22, true);
+                
+                // Update display
+                axEl.textContent = ax;
+                ayEl.textContent = ay;
+                azEl.textContent = az;
+                gxEl.textContent = gx;
+                gyEl.textContent = gy;
+                gzEl.textContent = gz;
+                tempEl.textContent = (temp / 100).toFixed(2);
+                seqEl.textContent = seq;
+                
+                imuSampleCount++;
+                
+                // Log if recording
+                if (isRecording) {
+                    imuDataLog.push({
+                        sequence: seq,
+                        timestamp_ms: timestamp,
+                        ax, ay, az,
+                        gx, gy, gz,
+                        temp: temp / 100
+                    });
+                }
+            }
+        }
+        
+        function handlePDMData(event) {
+            const value = event.target.value;
+            const data = new Uint8Array(value.buffer);
+            
+            if (data[0] === 0x50 && data.length >= 2) { // 'P'
+                const samples = (data.length - 2) / 2;
+                pdmSampleCount += samples;
+                
+                // Store if recording
+                if (isRecording) {
+                    for (let i = 0; i < samples; i++) {
+                        const view = new DataView(value.buffer, 2 + i * 2, 2);
+                        const sample = view.getInt16(0, true);
+                        pdmDataLog.push(sample);
+                    }
+                }
+            }
+        }
+        
+        function handleStatus(event) {
+            const value = event.target.value;
+            const data = new Uint8Array(value.buffer);
+            if (data[0] === 0x53) {
+                log(`Status - Stream: ${data[2] ? 'ON' : 'OFF'}, Record: ${data[3] ? 'ON' : 'OFF'}`, 'info');
+            }
+        }
+        
+        function calculateRate() {
+            if (!isStreaming) {
+                imuRateEl.textContent = '0 Hz';
+                return;
+            }
+            const rate = imuSampleCount - lastImuCount;
+            lastImuCount = imuSampleCount;
+            imuRateEl.textContent = `${rate} Hz`;
+            imuCountEl.textContent = imuSampleCount;
+            pdmCountEl.textContent = pdmSampleCount;
+        }
+        
+        // Download CSV
+        downloadCsvBtn.addEventListener('click', () => {
+            if (imuDataLog.length === 0) return;
+            
+            let csv = 'Sequence,Timestamp_ms,AccelX(g*1000),AccelY(g*1000),AccelZ(g*1000),GyroX(dps*10),GyroY(dps*10),GyroZ(dps*10),Temperature_C\n';
+            for (let i = 0; i < imuDataLog.length; i++) {
+                const d = imuDataLog[i];
+                csv += `${d.sequence},${d.timestamp_ms},${d.ax},${d.ay},${d.az},${d.gx},${d.gy},${d.gz},${d.temp}\n`;
+            }
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `imu_data_${Date.now()}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            log('IMU CSV downloaded', 'success');
+        });
+        
+        // Download WAV
+        downloadWavBtn.addEventListener('click', () => {
+            if (pdmDataLog.length === 0) return;
+            
+            const sampleRate = 16000;
+            const numChannels = 1;
+            const bitsPerSample = 16;
+            const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+            const blockAlign = numChannels * bitsPerSample / 8;
+            const dataSize = pdmDataLog.length * 2;
+            const buffer = new ArrayBuffer(44 + dataSize);
+            const view = new DataView(buffer);
+            
+            // WAV header
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + dataSize, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true); // PCM
+            view.setUint16(20, 1, true); // PCM
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, byteRate, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, bitsPerSample, true);
+            writeString(view, 36, 'data');
+            view.setUint32(40, dataSize, true);
+            
+            // Write samples
+            for (let i = 0; i < pdmDataLog.length; i++) {
+                view.setInt16(44 + i * 2, pdmDataLog[i], true);
+            }
+            
+            const blob = new Blob([buffer], { type: 'audio/wav' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `audio_${Date.now()}.wav`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            log('WAV audio downloaded', 'success');
+        });
+        
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+        
+        // Check Web Bluetooth support
+        if (!navigator.bluetooth) {
+            log('Web Bluetooth is not supported in this browser. Use Chrome/Edge on Android/PC.', 'error');
+            connectBtn.disabled = true;
+        } else {
+            log('Web Bluetooth supported. Ready to connect.', 'success');
+        }
+    </script>
+</body>
+</html>
