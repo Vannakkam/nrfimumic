@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XIAO Sense Recorder</title>
+<style>
+:root{--bg:#f3f5f2;--fg:#17201c;--mut:#5d6b64;--card:#fff;--line:#d3dad5;--acc:#0a7f5a;--rec:#d2352b;--p1:#0a7f5a;--p2:#c27a00;--p3:#3a63c9}
+@media (prefers-color-scheme:dark){:root{--bg:#121816;--fg:#e6ede9;--mut:#8fa196;--card:#1a2220;--line:#2b3733;--acc:#3fd09c;--rec:#ff6b5e;--p1:#3fd09c;--p2:#f0b440;--p3:#7da0ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:12px;max-width:760px;margin-inline:auto}
+h1{font-size:1.3rem;margin:4px 0 2px}
+.sub{color:var(--mut);margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:inherit;font-weight:600;padding:10px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;flex:1 1 140px}
+button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button.rec{background:var(--rec);border-color:var(--rec);color:#fff}
+button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.stat div{border-left:3px solid var(--line);padding-left:8px}
+.stat b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums}
+.stat span{color:var(--mut);font-size:.8rem}
+#status{font-weight:600}
+#status.on{color:var(--acc)}#status.rec{color:var(--rec)}
+canvas{width:100%;height:120px;display:block;background:var(--bg);border-radius:6px}
+h2{font-size:.95rem;margin:0 0 6px}
+.note{color:var(--mut);font-size:.82rem;margin:6px 0 0}
+.lvl{position:relative;height:14px;background:var(--bg);border:1px solid var(--line);border-radius:7px;overflow:hidden;margin-top:10px}
+#lvlBar{position:absolute;top:0;bottom:0;left:0;width:0;background:var(--acc);border-radius:6px;transition:width .07s linear}
+#lvlHold{position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--fg);opacity:.85;transition:left .07s linear}
+.lvltxt{display:flex;justify-content:space-between;gap:8px;color:var(--mut);font-size:.8rem;font-variant-numeric:tabular-nums;margin-top:4px}
+.vol{display:flex;align-items:center;gap:8px;flex:1 1 180px;color:var(--mut);font-size:.85rem}
+.vol input{flex:1;accent-color:var(--acc);min-width:90px}
+audio{width:100%;margin-top:8px}
+.hint{color:var(--mut);font-size:.8rem}
+</style>
+</head>
+<body>
+<h1>XIAO Sense recorder</h1>
+<p class="sub">IMU 416 Hz and 20 kHz microphone over Bluetooth LE, with Unix epoch timestamps.</p>
+
+<div class="card">
+  <div id="status">Not connected</div>
+  <div class="row" style="margin-top:8px">
+    <button id="bConn" class="pri">Connect</button>
+    <button id="bStart" disabled>Start recording</button>
+    <button id="bStop" disabled>Stop recording</button>
+    <button id="bRef" disabled>Refresh data</button>
+  </div>
+</div>
+
+<div class="card stat">
+  <div><b id="sT">0.0 s</b><span>Recording time</span></div>
+  <div><b id="sI">0</b><span>IMU samples</span></div>
+  <div><b id="sM">0</b><span>Mic samples</span></div>
+  <div><b id="sR">0 / 0</b><span>IMU Hz / mic Hz</span></div>
+  <div><b id="sL">0</b><span>Lost packets</span></div>
+  <div><b id="sK">0</b><span>kB/s received</span></div>
+  <div><b id="sP">0 / 0</b><span>IMU / mic packets</span></div>
+  <div><b id="sA">0</b><span>Mic peak (of 32767)</span></div>
+</div>
+
+<div class="card">
+  <h2>Live audio monitor</h2>
+  <div class="row">
+    <button id="bMon" disabled>Monitor audio</button>
+    <label class="vol">Volume <input id="vol" type="range" min="0" max="100" value="60"></label>
+  </div>
+  <div class="lvl"><div id="lvlBar"></div><div id="lvlHold"></div></div>
+  <div class="lvltxt"><span id="lvlDb">peak &minus;&infin; dBFS</span><span id="lvlRms">rms &minus;&infin; dBFS</span></div>
+  <p class="note">The monitor resamples the 20 kHz stream to your sound card's rate. Headphones recommended: at the default gain the mic will also pick up your speakers.</p>
+</div>
+
+<div class="card">
+  <h2>Accelerometer (&plusmn;4 g) &mdash; last 3 s</h2><canvas id="cI" width="720" height="240"></canvas>
+  <h2 style="margin-top:10px">Microphone &mdash; last <span id="mWin">0.2</span> s, auto-scaled <span id="mScale"></span></h2>
+  <canvas id="cM" width="720" height="240"></canvas>
+</div>
+
+<div class="card">
+  <h2>Playback &amp; download</h2>
+  <audio id="player" controls preload="none"></audio>
+  <div class="row" style="margin-top:8px">
+    <button id="dI" disabled>Download IMU (.csv)</button>
+    <button id="dM" disabled>Download mic (.wav)</button>
+    <button id="dP" disabled>Download mic packet times (.csv)</button>
+  </div>
+  <p class="note">Open this file from https:// or http://localhost in Chrome or Edge (Android or PC). Web Bluetooth is not available in Firefox or iOS Safari.</p>
+</div>
+
+<script>
+'use strict';
+const SVC='19b10000-e8f2-537e-4f6c-d104768a1214',DATA='19b10001-e8f2-537e-4f6c-d104768a1214',CTRL='19b10002-e8f2-537e-4f6c-d104768a1214';
+let micRate=20000;          // updated by the board (INFO packets) at each Start
+const ACC_LSB=4/32768,GYR_LSB=500/32768;
+const AD_IDX=[-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8];
+const AD_STEP=[7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767];
+function adpcm(v,o,nBytes,pred,idx){   // IMA ADPCM, low nibble first
+  const out=new Int16Array(nBytes*2);let k=0;
+  for(let i=0;i<nBytes;i++){const b=v.getUint8(o+i);
+    for(let h=0;h<2;h++){const c=h?b>>4:b&15,s=AD_STEP[idx];
+      let d=s>>3;if(c&4)d+=s;if(c&2)d+=s>>1;if(c&1)d+=s>>2;
+      pred+=(c&8)?-d:d;if(pred>32767)pred=32767;else if(pred<-32768)pred=-32768;
+      idx+=AD_IDX[c];if(idx<0)idx=0;else if(idx>88)idx=88;out[k++]=pred;}}
+  return out;
+}
+const $=id=>document.getElementById(id);
+let dev,ctrl,recording=false,imu,mic,pk,st,liveA,liveM,t0wall=0,micLim=0,playerURL=null;
+
+/* ------------------------------------------------------------------ */
+/* state                                                               */
+/* ------------------------------------------------------------------ */
+function reset(){
+  imu=[];mic=[];pk=[];liveA=[];liveM=[];micLim=0;
+  st={pi:0,pm:0,peak:0,win:0,i:0,m:0,lost:0,last:-1,bytes:0,bad:0,tFirst:0,mark:performance.now(),mi:0,mm:0,mb:0,rateI:0,rateM:0,rateK:0};
+  holdDb=-Infinity;holdT=0;
+  audioClear();
+  if(playerURL){URL.revokeObjectURL(playerURL);playerURL=null;}
+  $('player').removeAttribute('src');
+  paint();
+}
+function status(t,c){const s=$('status');s.textContent=t;s.className=c||'';}
+function ui(){
+  const c=!!ctrl;
+  $('bStart').disabled=!c||recording;$('bStop').disabled=!c||!recording;$('bRef').disabled=!c;
+  $('bConn').textContent=c?'Disconnect':'Connect';
+  $('bStart').className=recording?'':'rec';
+  $('bMon').disabled=!c&&!st.m;
+  $('bMon').className=monOn?'on':'';
+  $('bMon').textContent=monOn?'Stop monitor':'Monitor audio';
+  const has=st.i>0||st.m>0;
+  $('dI').disabled=!st.i;$('dM').disabled=!st.m;$('dP').disabled=!st.m;
+}
+const nowUs=()=>Math.round((performance.timeOrigin+performance.now())*1000);
+async function send(bytes){await ctrl.writeValueWithoutResponse(new Uint8Array(bytes));}
+async function syncTime(){
+  const b=new DataView(new ArrayBuffer(9));b.setUint8(0,3);b.setBigUint64(1,BigInt(nowUs()),true);
+  await send(new Uint8Array(b.buffer));
+}
+
+/* ------------------------------------------------------------------ */
+/* connection                                                          */
+/* ------------------------------------------------------------------ */
+const tmo=(p,ms,w)=>Promise.race([p,new Promise((_,r)=>setTimeout(()=>r(new Error(w+' timed out')),ms))]);
+async function openGatt(){
+  for(let a=1;a<=3;a++){
+    try{status('Step 1/4: opening GATT connection (attempt '+a+' of 3)…');return await tmo(dev.gatt.connect(),25000,'GATT connect');}
+    catch(e){try{dev.gatt.disconnect();}catch(_){}if(a===3)throw e;await new Promise(r=>setTimeout(r,1500));}
+  }
+}
+async function connect(){
+  try{
+    dev=await navigator.bluetooth.requestDevice({filters:[{services:[SVC]}]});
+    dev.addEventListener('gattserverdisconnected',onDisc);
+    const srv=await openGatt();
+    status('Step 2/4: finding service…');
+    const s=await tmo(srv.getPrimaryService(SVC),10000,'Service discovery');
+    status('Step 3/4: finding characteristics…');
+    ctrl=await tmo(s.getCharacteristic(CTRL),10000,'Control characteristic');
+    const d=await tmo(s.getCharacteristic(DATA),10000,'Data characteristic');
+    d.addEventListener('characteristicvaluechanged',onData);
+    status('Step 4/4: enabling notifications…');
+    await tmo(d.startNotifications(),10000,'Notifications');
+    await syncTime();
+    status('Connected to '+(dev.name||'device')+', time synced','on');
+  }catch(e){status('Connection failed: '+e.message);ctrl=null;try{dev.gatt.disconnect();}catch(_){}}
+  ui();
+}
+function onDisc(){
+  ctrl=null;recording=false;
+  stopMonitor();
+  status('Disconnected. Captured data is kept for download.');ui();
+}
+
+/* ------------------------------------------------------------------ */
+/* start / stop                                                        */
+/* ------------------------------------------------------------------ */
+async function start(){
+  reset();await syncTime();t0wall=performance.now();
+  status('Recording…','rec');recording=true;await send([1]);ui();
+}
+async function stop(){
+  try{await send([2]);}catch(_){}
+  recording=false;
+  status('Stopped. Ready to play and download.','on');
+  makePlayback();
+  ui();
+}
+async function refresh(){
+  const was=recording;reset();
+  if(ctrl){await syncTime();if(was)t0wall=performance.now();}
+  ui();
+}
+
+/* ------------------------------------------------------------------ */
+/* live audio monitor: 20 kHz -> sound card rate, fractional resample  */
+/* ------------------------------------------------------------------ */
+const ABUF=1<<15, AMASK=ABUF-1;
+const abuf=new Float32Array(ABUF);
+let aW=0,aR=0,actx=null,monNode=null,monGain=null,monOn=false;
+
+function audioClear(){aW=0;aR=0;}
+function audioPush(d){
+  const n=d.length;
+  for(let i=0;i<n;i++){
+    if(aW-aR>ABUF-16)aR=aW-ABUF+16;
+    abuf[aW&AMASK]=d[i]/32768;
+    aW++;
+  }
+  // keep the counters inside 32-bit bitwise range (0x20000000 is a
+  // multiple of ABUF, so the ring alignment is preserved)
+  if(aW>0x30000000){const k=aW-0x20000000;aW-=k;aR-=k;}
+}
+function onAudioProcess(e){
+  const out=e.outputBuffer.getChannelData(0);
+  const rate=micRate>0?micRate:20000;
+  const step=rate/actx.sampleRate;
+  for(let i=0;i<out.length;i++){
+    if(aW-aR<2){out[i]=0;aR=aW;continue;}
+    const i0=Math.floor(aR),f=aR-i0;
+    const s0=abuf[i0&AMASK],s1=abuf[(i0+1)&AMASK];
+    out[i]=s0+(s1-s0)*f;
+    aR+=step;
+  }
+  // if we fell far behind (clock drift, tab throttling), jump forward
+  if(aW-aR>0.25*rate)aR=aW-0.05*rate;
+}
+async function toggleMonitor(){
+  if(monOn){stopMonitor();return;}
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)throw new Error('Web Audio is not available');
+    if(!actx)actx=new AC();
+    await actx.resume();
+    if(!monNode){
+      monNode=actx.createScriptProcessor(1024,0,1);
+      monNode.onaudioprocess=onAudioProcess;
+      monGain=actx.createGain();
+      monGain.gain.value=volValue();
+      monNode.connect(monGain).connect(actx.destination);
+    }
+    monGain.gain.value=volValue();
+    audioClear();
+    monOn=true;
+  }catch(e){status('Audio monitor failed: '+e.message);}
+  ui();
+}
+function stopMonitor(){
+  if(monGain)monGain.gain.value=0;
+  monOn=false;
+  ui();
+}
+const volValue=()=>Math.pow(parseInt($('vol').value,10)/100,1.6);
+$('vol').addEventListener('input',()=>{if(monGain)monGain.gain.value=volValue();});
+$('bMon').onclick=toggleMonitor;
+
+/* ------------------------------------------------------------------ */
+/* packet handling                                                     */
+/* ------------------------------------------------------------------ */
+function onData(e){
+  const v=e.target.value,len=v.byteLength;
+  if(len<12)return;
+  const type=v.getUint8(0),seq=v.getUint16(1,true),t0=Number(v.getBigUint64(3,true)),n=v.getUint8(11);
+  if(type===3){
+    if(n===10){                                   // rate only (older firmware)
+      if(t0>=1000&&t0<=192000)micRate=t0;
+      $('mWin').textContent=(4000/micRate).toFixed(2);
+      return;
+    }
+    if(n===11){                                   // (adpcm << 32) | rate
+      const rate=t0%4294967296;
+      if(rate>=1000&&rate<=192000)micRate=rate;
+      $('mWin').textContent=(4000/micRate).toFixed(2);
+      return;
+    }
+    const m={1:'Mic failed to start on the board, recording IMU only.',2:'IMU not found on the board, recording mic only.',3:'Bluetooth packet size (MTU) is too small, so data cannot stream. Reconnect, or try another phone or PC.'};
+    status(m[n]||('Board status '+n),'rec');
+    return;
+  }
+  if(!recording)return;
+  const need=type===1?12+n*14:type===4?16+n:type===2?12+n*2:-1;
+  if(need!==len){
+    if(!st.bad++)status('Packets truncated ('+len+' of '+need+' bytes): BLE MTU too small. Check the sketch and board package version.','rec');
+    return;
+  }
+  if(st.last>=0)st.lost+=(seq-st.last-1)&0xFFFF;
+  st.last=seq;st.bytes+=len;st.mb+=len;
+  if(type===1){
+    const t=new Float64Array(n),d=new Int16Array(n*6);
+    for(let i=0;i<n;i++){
+      const o=12+i*14;t[i]=t0+v.getUint16(o,true)*16;
+      for(let j=0;j<6;j++)d[i*6+j]=v.getInt16(o+2+j*2,true);
+      liveA.push([d[i*6+3],d[i*6+4],d[i*6+5]]);
+    }
+    imu.push({t,d});st.i+=n;st.mi+=n;st.pi++;
+    if(liveA.length>1250)liveA.splice(0,liveA.length-1250);
+  }else if(type===2||type===4){
+    let d;
+    if(type===2){d=new Int16Array(n);for(let i=0;i<n;i++)d[i]=v.getInt16(12+i*2,true);}
+    else d=adpcm(v,16,n,v.getInt16(12,true),Math.min(88,v.getUint8(14)));
+    let p=0;
+    for(let i=0;i<d.length;i++){
+      const a=d[i]<0?-d[i]:d[i];
+      if(a>p)p=a;
+      liveM.push(d[i]);
+    }
+    if(p>st.peak)st.peak=p;
+    if(p>st.win)st.win=p;
+    if(monOn)audioPush(d);
+    mic.push(d);pk.push({seq,t0,n:d.length});st.m+=d.length;st.mm+=d.length;st.pm++;
+    if(liveM.length>4000)liveM.splice(0,liveM.length-4000);
+  }
+  if(!st.tFirst)st.tFirst=t0;
+}
+
+/* ------------------------------------------------------------------ */
+/* plots                                                               */
+/* ------------------------------------------------------------------ */
+function plot(c,series,lim,cols){
+  const x=c.getContext('2d'),W=c.width,H=c.height;
+  const css=getComputedStyle(document.documentElement);
+  x.clearRect(0,0,W,H);
+  x.strokeStyle=css.getPropertyValue('--line');x.lineWidth=1;
+  for(const g of [0.25,0.5,0.75]){
+    x.beginPath();x.moveTo(0,H*g);x.lineTo(W,H*g);x.stroke();
+  }
+  series.forEach((s,k)=>{
+    const n=s.length;
+    if(!n)return;
+    x.strokeStyle=css.getPropertyValue(cols[k]);x.lineWidth=1.5;x.beginPath();
+    for(let i=0;i<n;i++){
+      const px=i/Math.max(n-1,1)*W,py=H/2-Math.max(-1,Math.min(1,s[i]/lim))*H/2;
+      i?x.lineTo(px,py):x.moveTo(px,py);
+    }
+    x.stroke();
+  });
+}
+// power-of-two, so the mic trace never collapses to a flat line at normal
+// speech levels (the old page had a fixed +/-16000 scale)
+function niceLim(p){
+  const t=Math.max(256,p*1.25);
+  return Math.pow(2,Math.ceil(Math.log2(t)));
+}
+let holdDb=-Infinity,holdT=0;
+
+function paint(){
+  const now=performance.now(),dt=(now-st.mark)/1000;
+  if(dt>=1){st.rateI=st.mi/dt;st.rateM=st.mm/dt;st.rateK=st.mb/dt/1000;st.mi=st.mm=st.mb=0;st.mark=now;}
+  $('sT').textContent=(recording?(now-t0wall)/1000:0).toFixed(1)+' s';
+  $('sI').textContent=st.i.toLocaleString();$('sM').textContent=st.m.toLocaleString();
+  $('sR').textContent=Math.round(st.rateI)+' / '+Math.round(st.rateM);
+  $('sL').textContent=st.lost+(st.bad?' (+'+st.bad+' bad)':'');
+  $('sK').textContent=st.rateK.toFixed(1);
+  $('sP').textContent=st.pi+' / '+st.pm;$('sA').textContent=st.peak;
+
+  // level meter (peak, ~3 dB per 100 ms decay) + peak hold
+  let ss=0;
+  const N=Math.min(liveM.length,2000);
+  for(let i=liveM.length-N;i<liveM.length;i++)ss+=liveM[i]*liveM[i];
+  const rms=N?Math.sqrt(ss/N):0;
+  st.win*=0.72;
+  const db=v=>v>0?20*Math.log10(v/32768):-Infinity;
+  const pdb=db(st.win),rdb=db(rms);
+  if(pdb>holdDb||now-holdT>2500){holdDb=pdb;holdT=now;}
+  const bar=Math.max(0,Math.min(100,(pdb+60)/60*100));
+  const hb=Math.max(0,Math.min(100,(holdDb+60)/60*100));
+  const lb=$('lvlBar');
+  lb.style.width=bar+'%';
+  lb.style.background=pdb>-3?'var(--rec)':pdb>-12?'var(--p2)':'var(--acc)';
+  $('lvlHold').style.left=hb+'%';
+  const fmt=x=>x===-Infinity?'\u2212\u221e dBFS':x.toFixed(1)+' dBFS';
+  $('lvlDb').textContent='peak '+fmt(pdb);
+  $('lvlRms').textContent='rms '+fmt(rdb);
+
+  // mic plot: auto-scale to the visible window
+  let mp=0;
+  for(let i=0;i<liveM.length;i++){const a=liveM[i]<0?-liveM[i]:liveM[i];if(a>mp)mp=a;}
+  const target=niceLim(mp);
+  micLim=micLim?micLim+(target-micLim)*0.35:target;
+  $('mScale').textContent='(\u00b1'+Math.round(micLim)+')';
+
+  plot($('cI'),[0,1,2].map(j=>liveA.map(a=>a[j])),16384,['--p1','--p2','--p3']);
+  plot($('cM'),[liveM],micLim,['--p1']);
+  $('bMon').disabled=!ctrl&&!st.m;
+}
+setInterval(()=>{if(st)paint();},100);
+
+/* ------------------------------------------------------------------ */
+/* WAV assembly                                                        */
+/* ------------------------------------------------------------------ */
+function buildWav(){
+  if(!pk.length||!mic.length)return null;
+  const rate=(micRate>=1000&&micRate<=192000)?micRate:20000;
+  const t0=pk[0].t0;
+  const span=pk.length>1?pk[pk.length-1].t0-t0:0;
+  const sequential=!(span>0);          // old firmware repeated t0: fall back to a contiguous stream
+  const pos=new Array(pk.length);
+  let prevEnd=0;
+  for(let k=0;k<pk.length;k++){
+    const len=mic[k]?mic[k].length:0;
+    let s;
+    if(sequential){
+      s=prevEnd;
+    }else{
+      s=Math.round((pk[k].t0-t0)*rate/1e6);
+      if(!isFinite(s)||s<0)s=0;
+      if(s<prevEnd)s=prevEnd;          // never overlap a previous packet
+    }
+    pos[k]=s;
+    if(s+len>prevEnd)prevEnd=s+len;
+  }
+  const total=prevEnd;
+  if(!total)return null;
+  const out=new Uint8Array(44+total*2),h=new DataView(out.buffer);
+  const w=(o,s)=>{for(let i=0;i<s.length;i++)h.setUint8(o+i,s.charCodeAt(i));};
+  w(0,'RIFF');h.setUint32(4,36+total*2,true);w(8,'WAVEfmt ');
+  h.setUint32(16,16,true);h.setUint16(20,1,true);h.setUint16(22,1,true);
+  h.setUint32(24,rate,true);h.setUint32(28,rate*2,true);h.setUint16(32,2,true);h.setUint16(34,16,true);
+  w(36,'data');h.setUint32(40,total*2,true);
+  for(let k=0;k<pk.length;k++){
+    const c=mic[k];if(!c)continue;
+    let o=44+pos[k]*2;
+    const end=Math.min(c.length,total-pos[k]);
+    for(let i=0;i<end;i++,o+=2)h.setInt16(o,c[i],true);
+  }
+  return {blob:new Blob([out],{type:'audio/wav'}),total,rate,pos};
+}
+function makePlayback(){
+  const w=buildWav();
+  if(!w)return;
+  if(playerURL)URL.revokeObjectURL(playerURL);
+  playerURL=URL.createObjectURL(w.blob);
+  $('player').src=playerURL;
+}
+
+/* ------------------------------------------------------------------ */
+/* downloads                                                           */
+/* ------------------------------------------------------------------ */
+function save(name,parts,type){
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(parts,{type}));
+  a.download=name;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+}
+const stamp=()=>Math.round(st.tFirst/1000);
+function dlIMU(){
+  const parts=['epoch_us,epoch_ms,gx_dps,gy_dps,gz_dps,ax_g,ay_g,az_g\n'];
+  for(const c of imu){
+    let s='';
+    for(let i=0;i<c.t.length;i++){
+      const d=c.d,o=i*6;
+      s+=c.t[i]+','+(c.t[i]/1000).toFixed(3)+','+[0,1,2].map(j=>(d[o+j]*GYR_LSB).toFixed(3)).join(',')+','+[3,4,5].map(j=>(d[o+j]*ACC_LSB).toFixed(5)).join(',')+'\n';
+    }
+    parts.push(s);
+  }
+  save('imu_'+stamp()+'.csv',parts,'text/csv');
+}
+function dlWAV(){
+  const w=buildWav();
+  if(!w){status('No microphone data to save.','rec');return;}
+  save('mic_'+stamp()+'.wav',[w.blob],'audio/wav');
+}
+function dlPK(){
+  const w=buildWav();
+  let s='seq,epoch_us,epoch_ms,samples,first_sample_index\n';
+  for(let k=0;k<pk.length;k++){
+    const p=pk[k],idx=w?w.pos[k]:0;
+    s+=p.seq+','+p.t0+','+(p.t0/1000).toFixed(3)+','+p.n+','+idx+'\n';
+  }
+  save('mic_packets_'+stamp()+'.csv',[s],'text/csv');
+}
+
+/* ------------------------------------------------------------------ */
+$('bConn').onclick=()=>{
+  if(ctrl){dev.gatt.disconnect();return;}
+  if(!navigator.bluetooth){status('Web Bluetooth is not supported here. Use Chrome or Edge over https or localhost.');return;}
+  connect();
+};
+$('bStart').onclick=start;$('bStop').onclick=stop;$('bRef').onclick=refresh;
+$('dI').onclick=dlIMU;$('dM').onclick=dlWAV;$('dP').onclick=dlPK;
+reset();ui();
+</script>
+</body>
+</html>
